@@ -314,7 +314,7 @@ Further, the `--out` or `-o` argument lets you specify the directory path for yo
 
 ## 🔧 Troubleshooting
 
-Encountering issues? Don't worry. If you come across any problems or have questions, please don't hesitate to submit a ticket for assistance: [Submit an issue on GitHub](https://github.com/franckferman/MetaDetective/issues)
+Encountering issues? Don't worry. If you come across any problems or have questions, please don't hesitate to submit a ticket: [Submit an issue on GitHub](https://github.com/franckferman/MetaDetective/issues)
 
 <p align="right">(<a href="#top">🔼 Back to top</a>)</p>
 
