@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-
-"""Unleash Metadata Intelligence with MetaDetective. Your Assistant Beyond Metagoofil.
+"""
+Unleash Metadata Intelligence with MetaDetective. Your Assistant Beyond Metagoofil.
 
 Created By  : Franck FERMAN @franckferman
 Created Date: 27/08/23
 Version     : 1.0.9 (09/11/23)
+
+Modifications:
+  - Updated web scraping functions to use CloudScraper to bypass anti-bot measures.
 """
 
 import argparse
@@ -26,6 +29,8 @@ from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse, urljoin, quote
 
+# Import CloudScraper for bypassing anti-bot measures
+import cloudscraper  # <--
 
 BANNER = r"""
 ___  ___     _       ______     _            _   _     	 	 _==\/==_
@@ -599,7 +604,7 @@ def export_metadata_to_html(args: Namespace, all_metadata: List[Dict[str, str]],
         str: HTML representation of the metadata.
     """
     html_parts = [
-        '<html>'
+        '<html>',
         '<head>',
         '<title>MetaDetective Export</title>',
         CSS_STYLE,
@@ -816,43 +821,39 @@ class LinkParser(HTMLParser):
 
 def fetch_links_from_url(url: str) -> List[str]:
     """
-    Fetch all links from a given URL.
+    Fetch all links from a given URL using CloudScraper.
+
+    This function replaces the use of urllib.request.urlopen with CloudScraper
+    to better handle websites that employ anti-bot measures.
 
     Args:
         url (str): The URL to fetch links from.
 
     Returns:
         List[str]: List of links found on the page.
-
-    Raises:
-        urllib.error.URLError: If there's an issue with opening the URL.
-        ValueError: If there's an issue with decoding the response data.
     """
     pattern = re.compile(r"\.(css|js)($|\?|#)")
 
     try:
-        response = urllib.request.urlopen(url)
+        # Create a CloudScraper session and perform a GET request
+        scraper = cloudscraper.create_scraper()  # <-- CloudScraper instance
+        response = scraper.get(url)
 
         content_type = response.headers.get('Content-Type', '').split(';')[0]
         if 'text' not in content_type:
             return []
 
-        data = response.read().decode()
+        # Get the response text directly
+        data = response.text
         parser = LinkParser()
         parser.feed(data)
         return [link for link in parser.links if not link.startswith("javascript:") and not pattern.search(link)]
 
-    except urllib.error.URLError as e:
+    except Exception as e:
         if url.startswith("mailto:"):
             print(f"INFO: Found mailto link {url}")
         else:
-            print(f"ERROR: Unable to open {url} Reason: {e}")
-        return []
-    except urllib.error.HTTPError as e:
-        print(f"HTTP Error for URL {url} Reason: {e.code} - {e.reason}")
-        return []
-    except ValueError as e:
-        print(f"ERROR: Unable to decode data from {url} Reason: {e}")
+            print(f"ERROR: Unable to open {url}. Reason: {e}")
         return []
 
 
@@ -992,7 +993,7 @@ def find_unique_filename(path: str) -> str:
 
 def download_file(url: str, download_dir: str) -> None:
     """
-    Download a file from a specified URL and save it to the given directory.
+    Download a file from a specified URL using CloudScraper and save it to the given directory.
     If the file already exists and the content is identical (same hash),
     the download is skipped. If the file exists but the content is different,
     a new unique filename is generated.
@@ -1006,28 +1007,31 @@ def download_file(url: str, download_dir: str) -> None:
                     an error message with the reason for the failure is printed.
     """
     try:
+        # Encode the URL to ensure it is valid
         encoded_url = quote(url, safe=":/?&=")
         local_filename = os.path.join(download_dir, os.path.basename(urlparse(encoded_url).path))
 
-        with urllib.request.urlopen(encoded_url) as response:
-            data = response.read()
-            file_hash = calculate_hash(data)
+        # Create a CloudScraper session and perform a GET request for binary data
+        scraper = cloudscraper.create_scraper()  # <-- Using CloudScraper here
+        response = scraper.get(encoded_url)
+        data = response.content
+        file_hash = calculate_hash(data)
 
-            if os.path.exists(local_filename):
-                with open(local_filename, 'rb') as existing_file:
-                    existing_file_hash = calculate_hash(existing_file.read())
+        if os.path.exists(local_filename):
+            with open(local_filename, 'rb') as existing_file:
+                existing_file_hash = calculate_hash(existing_file.read())
 
-                if file_hash == existing_file_hash:
-                    print(f"WARNING: Duplicate file detected for '{local_filename}'. Both have the same hash: {file_hash}.")
-                    return
-                else:
-                    new_local_filename = find_unique_filename(local_filename)
-                    print(f"INFO: File '{local_filename}' already exists with a different hash. Saving the new file as '{new_local_filename}'.")
-                    local_filename = new_local_filename
+            if file_hash == existing_file_hash:
+                print(f"WARNING: Duplicate file detected for '{local_filename}'. Both have the same hash: {file_hash}.")
+                return
+            else:
+                new_local_filename = find_unique_filename(local_filename)
+                print(f"INFO: File '{local_filename}' already exists with a different hash. Saving the new file as '{new_local_filename}'.")
+                local_filename = new_local_filename
 
-            with open(local_filename, 'wb') as out_file:
-                out_file.write(data)
-            print(f"INFO: Downloaded {url} to {local_filename}. SHA-256: {file_hash}.")
+        with open(local_filename, 'wb') as out_file:
+            out_file.write(data)
+        print(f"INFO: Downloaded {url} to {local_filename}. SHA-256: {file_hash}.")
     except Exception as e:
         print(f"ERROR: Failed to download {url}. Reason: {e}")
 
@@ -1092,8 +1096,8 @@ def process_task(task: Tuple[str, int, str, bool],
         lock (threading.Lock): A lock object to ensure thread-safe operations.
         rate_limiter (RateLimiter): An object to control the rate of URL processing.
         file_stats (Dict[str, int]): A dictionary to track various statistics related to file processing.
-        download_dir (Optional[str], optional): The directory where the files should be saved. If None, no files are saved. Defaults to None.
-        scan (bool, optional): A flag indicating if the tool is in scan mode. If True, URLs are only scanned and not downloaded. Defaults to False.
+        download_dir (Optional[str], optional): The directory where the files should be saved. If None, no files are saved.
+        scan (bool, optional): A flag indicating if the tool is in scan mode. If True, URLs are only scanned and not downloaded.
     """
     url, depth, base_domain, follow_extern = task
     process_url(url, depth, base_domain, q, seen, lock, rate_limiter, file_stats, download_dir, scan, follow_extern)
