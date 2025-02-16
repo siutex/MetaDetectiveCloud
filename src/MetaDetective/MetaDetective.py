@@ -26,7 +26,6 @@ from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse, urljoin, quote
 
-
 BANNER = r"""
 ___  ___     _       ______     _            _   _     	 	 _==\/==_
 |  \/  |    | |      |  _  \   | |          | | (_)    		/________\
@@ -176,11 +175,9 @@ NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/ui/search.html?q="
 
 SENTINEL = None
 
-
 def show_banner() -> None:
     """Print the banner."""
     print(BANNER)
-
 
 def check_exiftool_installed() -> None:
     """Verify exiftool installation and exit the program if absent or on execution error."""
@@ -190,7 +187,6 @@ def check_exiftool_installed() -> None:
         sys.exit(EXIFTOOL_NOT_INSTALLED)
     except subprocess.CalledProcessError:
         sys.exit(EXIFTOOL_EXECUTION_ERROR)
-
 
 def dms_to_dd(degrees: int, minutes: int, seconds: float, direction: str) -> float:
     """
@@ -222,7 +218,6 @@ def dms_to_dd(degrees: int, minutes: int, seconds: float, direction: str) -> flo
         dd *= -1
     return dd
 
-
 def parse_dms(dms_str: str) -> Optional[Tuple[int, int, float, str]]:
     """
     Parse a DMS (Degree-Minute-Second) string into its components.
@@ -249,7 +244,6 @@ def parse_dms(dms_str: str) -> Optional[Tuple[int, int, float, str]]:
         return int(deg), int(min), float(sec), dir.upper()
 
     raise ValueError(f"Invalid DMS format: {dms_str}")
-
 
 def get_metadata(file_path: str, fields: List[str]) -> dict:
     """
@@ -306,7 +300,6 @@ def get_metadata(file_path: str, fields: List[str]) -> dict:
 
     return metadata
 
-
 def matches_any_pattern(value: str, patterns: List[str]) -> bool:
     """
     Check if a string matches any of the provided patterns.
@@ -323,7 +316,6 @@ def matches_any_pattern(value: str, patterns: List[str]) -> bool:
     """
     compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
     return any(pattern.search(value) for pattern in compiled_patterns)
-
 
 def valid_directory(path: str) -> str:
     """
@@ -345,7 +337,6 @@ def valid_directory(path: str) -> str:
         raise argparse.ArgumentTypeError(f"Path '{path}' is not a directory.")
 
     return path
-
 
 def filter_files_by_extension(files: List[str], extensions: List[str]) -> List[str]:
     """
@@ -369,7 +360,6 @@ def filter_files_by_extension(files: List[str], extensions: List[str]) -> List[s
 
     ext_set = set(extensions)
     return [file for file in files if file.endswith(tuple(ext_set))]
-
 
 def get_files(args) -> List[str]:
     """
@@ -400,7 +390,6 @@ def get_files(args) -> List[str]:
         raise ValueError("Error: No files found.")
 
     return files
-
 
 def get_address_from_coords(lat: str, lon: str) -> str:
     """
@@ -439,7 +428,6 @@ def get_address_from_coords(lat: str, lon: str) -> str:
         print(f"Unexpected error: {e}")
         raise
 
-
 def format_gps_data(metadata: Dict[str, str]) -> None:
     """
     Update the provided metadata dictionary with address and map link
@@ -474,7 +462,6 @@ def format_gps_data(metadata: Dict[str, str]) -> None:
 
     metadata["Map Link"] = NOMINATIM_LINK.format(lat=lat, lon=lon)
 
-
 def display_all_metadata(all_metadata: List[Dict[str, Any]], ignore_patterns: List[str]) -> None:
     """
     Display all metadata fields for each metadata entry, excluding fields that match ignore patterns.
@@ -506,7 +493,6 @@ def display_all_metadata(all_metadata: List[Dict[str, Any]], ignore_patterns: Li
         if displayed_fields == 1:
             print("No relevant metadata found.")
         print("-" * 40)
-
 
 def display_singular_metadata(all_metadata: List[Dict[str, Any]],
                               args: Namespace,
@@ -555,7 +541,6 @@ def display_singular_metadata(all_metadata: List[Dict[str, Any]],
                 print(f"{field}: {', '.join(unique_cased_values)}")
             print()
 
-
 def display_metadata(args: Namespace,
                      all_metadata: List[Dict[str, Any]],
                      ignore_patterns: List[str]) -> None:
@@ -585,7 +570,6 @@ def display_metadata(args: Namespace,
     else:
         raise ValueError(f"Unrecognized display preference: {args.display}")
 
-
 def export_metadata_to_html(args: Namespace, all_metadata: List[Dict[str, str]], ignore_patterns: List[str]) -> str:
     """
     Convert and export metadata to a beautiful HTML page based on the provided arguments.
@@ -599,7 +583,7 @@ def export_metadata_to_html(args: Namespace, all_metadata: List[Dict[str, str]],
         str: HTML representation of the metadata.
     """
     html_parts = [
-        '<html>'
+        '<html>',
         '<head>',
         '<title>MetaDetective Export</title>',
         CSS_STYLE,
@@ -668,7 +652,6 @@ def export_metadata_to_html(args: Namespace, all_metadata: List[Dict[str, str]],
     html_parts.append('</body></html>')
     return ''.join(html_parts)
 
-
 def generate_all_metadata_txt(all_metadata: List[Dict[str, Any]], ignore_patterns: List[str]) -> List[str]:
     """
     Generate a list of text strings representing the complete metadata for each entry.
@@ -695,7 +678,6 @@ def generate_all_metadata_txt(all_metadata: List[Dict[str, Any]], ignore_pattern
         text_parts.append("-" * 40)
 
     return text_parts
-
 
 def generate_singular_metadata_txt(all_metadata: List[Dict[str, Any]],
                                    args: Namespace,
@@ -739,7 +721,6 @@ def generate_singular_metadata_txt(all_metadata: List[Dict[str, Any]],
 
     return text_parts
 
-
 def export_metadata_to_txt(args: Namespace, all_metadata: List[Dict[str, Any]], ignore_patterns: List[str]) -> str:
     """
     Export the provided metadata to a text format based on the specified arguments.
@@ -758,7 +739,6 @@ def export_metadata_to_txt(args: Namespace, all_metadata: List[Dict[str, Any]], 
         text_parts = generate_singular_metadata_txt(all_metadata, args, ignore_patterns)
 
     return '\n'.join(text_parts)
-
 
 def valid_filename(value: str) -> str:
     """
@@ -784,10 +764,8 @@ def valid_filename(value: str) -> str:
 
     return value
 
-
 class LinkParser(HTMLParser):
     """HTML Parser to extract links from a web page."""
-
     def __init__(self) -> None:
         """Initialize the LinkParser."""
         super().__init__()
@@ -813,7 +791,6 @@ class LinkParser(HTMLParser):
                 if name == target_attr:
                     self.links.append(value)
 
-
 def fetch_links_from_url(url: str) -> List[str]:
     """
     Fetch all links from a given URL.
@@ -829,19 +806,22 @@ def fetch_links_from_url(url: str) -> List[str]:
         ValueError: If there's an issue with decoding the response data.
     """
     pattern = re.compile(r"\.(css|js)($|\?|#)")
-
+    # Set custom headers to mimic a browser
+    custom_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                      'AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/90.0.4430.93 Safari/537.36'
+    }
     try:
-        response = urllib.request.urlopen(url)
-
+        req = urllib.request.Request(url, headers=custom_headers)
+        response = urllib.request.urlopen(req)
         content_type = response.headers.get('Content-Type', '').split(';')[0]
         if 'text' not in content_type:
             return []
-
         data = response.read().decode()
         parser = LinkParser()
         parser.feed(data)
         return [link for link in parser.links if not link.startswith("javascript:") and not pattern.search(link)]
-
     except urllib.error.URLError as e:
         if url.startswith("mailto:"):
             print(f"INFO: Found mailto link {url}")
@@ -855,7 +835,6 @@ def fetch_links_from_url(url: str) -> List[str]:
         print(f"ERROR: Unable to decode data from {url} Reason: {e}")
         return []
 
-
 def is_valid_file_link(link: str) -> bool:
     """
     Check if the link is a valid file link based on its extension.
@@ -868,7 +847,6 @@ def is_valid_file_link(link: str) -> bool:
     """
     path = urllib.parse.urlsplit(link).path
     return any(path.endswith(f".{ext}") for ext in EXTENSIONS)
-
 
 def process_url(url: str, depth: int, base_domain: str, q, seen: Set[str],
                 lock: threading.Lock, rate_limiter, file_stats: Dict[str, int],
@@ -931,10 +909,8 @@ def process_url(url: str, depth: int, base_domain: str, q, seen: Set[str],
 
             q.put((joined_link, depth - 1, base_domain, follow_extern))
 
-
 class RateLimiter:
     """Rate limiter class to control the frequency of function calls."""
-
     def __init__(self, rate: float):
         """
         Initialize a RateLimiter instance.
@@ -954,7 +930,6 @@ class RateLimiter:
                 time.sleep(left_to_wait)
             self.last_call = time.time()
 
-
 def calculate_hash(data: bytes) -> str:
     """
     Calculate the SHA-256 hash of the given data.
@@ -968,7 +943,6 @@ def calculate_hash(data: bytes) -> str:
     sha256_hash = hashlib.sha256()
     sha256_hash.update(data)
     return sha256_hash.hexdigest()
-
 
 def find_unique_filename(path: str) -> str:
     """
@@ -989,7 +963,6 @@ def find_unique_filename(path: str) -> str:
         counter += 1
     return path
 
-
 def download_file(url: str, download_dir: str) -> None:
     """
     Download a file from a specified URL and save it to the given directory.
@@ -1008,8 +981,14 @@ def download_file(url: str, download_dir: str) -> None:
     try:
         encoded_url = quote(url, safe=":/?&=")
         local_filename = os.path.join(download_dir, os.path.basename(urlparse(encoded_url).path))
-
-        with urllib.request.urlopen(encoded_url) as response:
+        # Set custom headers to mimic a browser
+        custom_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/90.0.4430.93 Safari/537.36'
+        }
+        req = urllib.request.Request(encoded_url, headers=custom_headers)
+        with urllib.request.urlopen(req) as response:
             data = response.read()
             file_hash = calculate_hash(data)
 
@@ -1030,7 +1009,6 @@ def download_file(url: str, download_dir: str) -> None:
             print(f"INFO: Downloaded {url} to {local_filename}. SHA-256: {file_hash}.")
     except Exception as e:
         print(f"ERROR: Failed to download {url}. Reason: {e}")
-
 
 def worker_thread(q: queue.Queue[Tuple[str, int, str, bool]],
                   seen: Set[str],
@@ -1060,7 +1038,6 @@ def worker_thread(q: queue.Queue[Tuple[str, int, str, bool]],
 
         q.task_done()
 
-
 def get_task_from_queue(q: queue.Queue[Tuple[str, int, str, bool]]) -> Tuple[str, int, str, bool]:
     """
     Fetches the next task from the provided queue.
@@ -1072,7 +1049,6 @@ def get_task_from_queue(q: queue.Queue[Tuple[str, int, str, bool]]) -> Tuple[str
         Tuple[str, int, str, bool]: The next task in the form of (URL, depth, base_domain, follow_external_links).
     """
     return q.get()
-
 
 def process_task(task: Tuple[str, int, str, bool],
                  q: queue.Queue[Tuple[str, int, str, bool]],
@@ -1098,7 +1074,6 @@ def process_task(task: Tuple[str, int, str, bool],
     url, depth, base_domain, follow_extern = task
     process_url(url, depth, base_domain, q, seen, lock, rate_limiter, file_stats, download_dir, scan, follow_extern)
 
-
 def valid_url(url: str) -> str:
     """
     Validates if the provided value is a valid URL.
@@ -1118,7 +1093,6 @@ def valid_url(url: str) -> str:
     if not url_pattern.match(url):
         raise argparse.ArgumentTypeError(f"'{url}' is not a valid URL.")
     return url
-
 
 def main():
     show_banner()
@@ -1273,7 +1247,6 @@ def main():
 
     else:
         parser.error("You must specify either --scraping or --directory or --files.")
-
 
 if __name__ == "__main__":
     main()
