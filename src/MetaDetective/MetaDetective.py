@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-
-"""Unleash Metadata Intelligence with MetaDetective. Your Assistant Beyond Metagoofil.
+"""
+Unleash Metadata Intelligence with MetaDetective. Your Assistant Beyond Metagoofil.
 
 Created By  : Franck FERMAN @franckferman
 Created Date: 27/08/23
 Version     : 1.0.9 (09/11/23)
+Note:
+  This version uses Selenium for fetching page content to bypass advanced anti-scraping defenses.
+  Requires: selenium (pip install selenium) and a suitable WebDriver (e.g., ChromeDriver).
 """
 
 import argparse
@@ -25,6 +28,10 @@ from collections import defaultdict
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse, urljoin, quote
+
+# Import Selenium for headless browser functionality
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 BANNER = r"""
 ___  ___     _       ______     _            _   _     	 	 _==\/==_
@@ -103,9 +110,7 @@ CSS_STYLE = """
         transform: translateY(-20px);
         animation: fadeInUp 0.5s forwards 0.2s ease-out;
     }
-    @keyframes fadeInUp {
-        to { opacity: 1; transform: translateY(0); }
-    }
+    @keyframes fadeInUp { to { opacity: 1; transform: translateY(0); } }
     .metadata-entry:hover {
         box-shadow: 0 6px 12px rgba(0, 0, 0, 0.8);
         transform: scale(1.02);
@@ -178,7 +183,6 @@ def get_metadata(file_path: str, fields: List[str]) -> dict:
     except UnicodeDecodeError as e:
         print(f"Error decoding output for file {file_path}: {e}\n")
         return {}
-
     field_set = set(fields)
     metadata = {}
     for line in exiftool_output.stdout.splitlines():
@@ -188,7 +192,6 @@ def get_metadata(file_path: str, fields: List[str]) -> dict:
         key = key.strip()
         if key in field_set and value.strip():
             metadata[key] = value.strip()
-
     lat_dd, lon_dd = None, None
     gps_position = metadata.get("GPS Position", None)
     if gps_position:
@@ -444,39 +447,38 @@ class LinkParser(HTMLParser):
                 if name == target_attr:
                     self.links.append(value)
 
+# --- Modified: Using Selenium to fetch page content ---
 def fetch_links_from_url(url: str) -> List[str]:
-    pattern = re.compile(r"\.(css|js)($|\?|#)")
-    # Build additional headers to mimic a full browser request
-    custom_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                      'AppleWebKit/537.36 (KHTML, like Gecko) '
-                      'Chrome/90.0.4430.93 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': url  # Using the same URL as referer can sometimes help
-    }
+    """
+    Use Selenium with headless Chrome to fetch the rendered page content and extract links.
+    This can bypass advanced anti-scraping measures that result in a 403 error.
+    """
+    # Configure headless Chrome
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    # You can add further options if needed
+    driver = webdriver.Chrome(options=options)
     try:
-        req = urllib.request.Request(url, headers=custom_headers)
-        response = urllib.request.urlopen(req)
-        content_type = response.headers.get('Content-Type', '').split(';')[0]
-        if 'text' not in content_type:
-            return []
-        data = response.read().decode()
-        parser = LinkParser()
-        parser.feed(data)
-        return [link for link in parser.links if not link.startswith("javascript:") and not pattern.search(link)]
-    except urllib.error.URLError as e:
-        if url.startswith("mailto:"):
-            print(f"INFO: Found mailto link {url}")
-        else:
-            print(f"ERROR: Unable to open {url} Reason: {e}")
-        return []
-    except urllib.error.HTTPError as e:
-        print(f"HTTP Error for URL {url} Reason: {e.code} - {e.reason}")
-        return []
-    except ValueError as e:
-        print(f"ERROR: Unable to decode data from {url} Reason: {e}")
-        return []
+        driver.get(url)
+        # Allow some time for JavaScript to load (adjust as needed)
+        time.sleep(2)
+        page_source = driver.page_source
+    except Exception as e:
+        print(f"ERROR: Selenium failed to load {url}. Reason: {e}")
+        page_source = ""
+    finally:
+        driver.quit()
+    # Parse the page source using our HTMLParser
+    parser = LinkParser()
+    try:
+        parser.feed(page_source)
+    except Exception as e:
+        print(f"ERROR parsing HTML from {url}: {e}")
+    pattern = re.compile(r"\.(css|js)($|\?|#)")
+    return [link for link in parser.links if not link.startswith("javascript:") and not pattern.search(link)]
+# --- End Selenium modification ---
 
 def is_valid_file_link(link: str) -> bool:
     path = urllib.parse.urlsplit(link).path
@@ -614,19 +616,20 @@ def valid_url(url: str) -> str:
 def main():
     show_banner()
     check_exiftool_installed()
-    parser = argparse.ArgumentParser(description="Retrieve and display metadata from files using exiftool.",
-                                     epilog="Example commands:\n\n"
-                                            "# Analysis:\n"
-                                            "   python3 MetaDetective.py -d path/to/directory\n"
-                                            "   python3 MetaDetective.py -d directory -i ^admin anonymous -t doc pdf\n"
-                                            "   python3 MetaDetective.py -d directory -t all -display singular -format formatted\n"
-                                            "   python3 MetaDetective.py -d directory --export\n"
-                                            "# Scraping:\n"
-                                            "   python3 MetaDetective.py --scraping --scan --url https://example.com/\n"
-                                            "   python3 MetaDetective.py --scraping --download-dir directory --url https://example.com/\n"
-                                            "   python3 MetaDetective.py --scraping --depth 1 --download-dir directory --url https://example.com/\n",
-                                     formatter_class=argparse.RawTextHelpFormatter)
-    scraping_group = parser.add_argument_group('scraping options', 'Options for scraping files containing potential metadata from a website.')
+    parser = argparse.ArgumentParser(
+        description="Retrieve and display metadata from files using exiftool.",
+        epilog="Example commands:\n\n"
+               "# Analysis:\n"
+               "python3 MetaDetective.py -d path/to/directory\n"
+               "python3 MetaDetective.py -d directory -i ^admin anonymous -t doc pdf\n"
+               "python3 MetaDetective.py -d directory -t all -display singular -format formatted\n"
+               "python3 MetaDetective.py -d directory --export\n"
+               "# Scraping:\n"
+               "python3 MetaDetective.py --scraping --scan --url https://example.com/\n"
+               "python3 MetaDetective.py --scraping --download-dir directory --url https://example.com/\n"
+               "python3 MetaDetective.py --scraping --depth 1 --download-dir directory --url https://example.com/\n",
+        formatter_class=argparse.RawTextHelpFormatter)
+    scraping_group = parser.add_argument_group('scraping options', 'Options for scraping files from a website.')
     scraping_group.add_argument('-s', '--scraping', action='store_true', help="Activate scraping mode.")
     scraping_group.add_argument('-u', "--url", type=valid_url, help="Site URL for scraping.")
     scraping_group.add_argument("--scan", action="store_true", help="Scan the website without downloading files.")
@@ -642,10 +645,12 @@ def main():
     analysis_group.add_argument('-t', '--type', nargs='+', default=['all'], help="File types (extensions) to analyze (all by default).")
     display_group = parser.add_argument_group('display options', 'Options for displaying results.')
     display_group.add_argument('-i', '--ignore', nargs='+', help="Ignore results matching keywords or regexes.")
-    display_group.add_argument('--display', choices=['all', 'singular'], default='singular', help="Display mode: 'all' for detailed per-file display; 'singular' for condensed results.")
+    display_group.add_argument('--display', choices=['all', 'singular'], default='singular',
+                               help="Display mode: 'all' for detailed per-file display; 'singular' for condensed results.")
     display_group.add_argument('--format', choices=['formatted', 'concise'], help="Display format for 'singular' mode: 'formatted' (stylized) or 'concise' (basic).")
     export_group = parser.add_argument_group('export options', 'Options for exporting results.')
-    export_group.add_argument('-e', '--export', nargs='?', const='html', choices=['html', 'txt'], default=None, help="Export results. Default is HTML; 'txt' is also possible.")
+    export_group.add_argument('-e', '--export', nargs='?', const='html', choices=['html', 'txt'], default=None,
+                              help="Export results. Default is HTML; 'txt' is also possible.")
     export_group.add_argument('-c', '--custom', type=valid_filename, help="Custom filename suffix.")
     export_group.add_argument('-o', '--out', type=valid_directory, default=os.getcwd(), help="Export directory.")
     args = parser.parse_args()
