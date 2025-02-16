@@ -4,10 +4,11 @@ Unleash Metadata Intelligence with MetaDetective. Your Assistant Beyond Metagoof
 
 Created By  : Franck FERMAN @franckferman
 Created Date: 27/08/23
-Version     : 1.0.9 (09/11/23)
+Version     : 1.0.9 (09/11/23) - Fully fixed version (with browser-like headers)
 
 Modifications:
-  - Updated web scraping functions to use CloudScraper to bypass anti-bot measures.
+  - Updated web scraping functions to use CloudScraper with a common browser user agent
+    and additional headers to bypass anti-bot measures.
 """
 
 import argparse
@@ -67,7 +68,12 @@ EXIFTOOL_NOT_INSTALLED = "Error: exiftool is not installed. Please install it to
 EXIFTOOL_EXECUTION_ERROR = "Error: exiftool encountered an error."
 
 NOMINATIM_HOST = "nominatim.openstreetmap.org"
-USER_AGENT = 'MetaDetective/1.0.9'
+USER_AGENT = 'MetaDetective/1.0.9'  # Used for exiftool-related requests
+# New browser-like User-Agent for web scraping:
+BROWSER_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/105.0.0.0 Safari/537.36")
+
 NOMINATIM_ENDPOINT = "/reverse?format=jsonv2&lat={lat}&lon={lon}"
 
 NOMINATIM_LINK = "https://nominatim.openstreetmap.org/ui/reverse.html?lat={lat}&lon={lon}"
@@ -200,20 +206,6 @@ def check_exiftool_installed() -> None:
 def dms_to_dd(degrees: int, minutes: int, seconds: float, direction: str) -> float:
     """
     Convert coordinates from DMS (Degree-Minute-Second) to DD (Decimal Degrees).
-
-    Args:
-        degrees (int): Degrees component of DMS.
-        minutes (int): Minutes component of DMS.
-        seconds (float): Seconds component of DMS.
-        direction (str): Hemisphere identifier ('N', 'S', 'E', 'W').
-        'N' and 'E' yield positive values; 'S' and 'W' yield negative values.
-
-    Returns:
-        float: Coordinate in Decimal Degrees format.
-
-    Raises:
-        ValueError: If direction is not one of 'N', 'S', 'E', 'W' or
-                    if degrees, minutes or seconds are out of valid range.
     """
     if not (0 <= degrees < 180) or not (0 <= minutes < 60) or not (0 <= seconds < 60):
         raise ValueError("Invalid DMS values provided.")
@@ -231,18 +223,6 @@ def dms_to_dd(degrees: int, minutes: int, seconds: float, direction: str) -> flo
 def parse_dms(dms_str: str) -> Optional[Tuple[int, int, float, str]]:
     """
     Parse a DMS (Degree-Minute-Second) string into its components.
-
-    Args:
-        dms_str (str): String in DMS format, e.g., "50 deg 49' 8.59\" N".
-
-    Returns:
-        Optional[Tuple[int, int, float, str]]:
-        Components (degrees, minutes, seconds, direction)
-        of the DMS if parsed successfully, otherwise None.
-
-    Raises:
-        ValueError: If direction is not one of 'N', 'S', 'E', 'W' or
-                    if the input string does not match the DMS pattern.
     """
     match = re.search(r"(\d+)\s*deg\s*(\d+)'\s*([\d.]+)\"\s*(\w)", dms_str)
     if match:
@@ -259,17 +239,6 @@ def parse_dms(dms_str: str) -> Optional[Tuple[int, int, float, str]]:
 def get_metadata(file_path: str, fields: List[str]) -> dict:
     """
     Retrieve specified metadata fields from a file using exiftool.
-
-    Args:
-        file_path (str): Path of the file to analyze.
-        fields (List[str]): List of metadata fields to extract.
-
-    Returns:
-        dict: Dictionary containing the extracted metadata.
-
-    Raises:
-        subprocess.CalledProcessError: If there's an error executing exiftool.
-        UnicodeDecodeError: If there's an error decoding the exiftool output.
     """
     try:
         exiftool_output = subprocess.run(["exiftool", file_path], capture_output=True, text=True, check=True)
@@ -315,16 +284,6 @@ def get_metadata(file_path: str, fields: List[str]) -> dict:
 def matches_any_pattern(value: str, patterns: List[str]) -> bool:
     """
     Check if a string matches any of the provided patterns.
-
-    Args:
-        value (str): The string to check.
-        patterns (List[str]): List of patterns to check against.
-
-    Returns:
-        bool: True if the value matches any of the patterns, False otherwise.
-
-    Raises:
-        re.error: If one of the patterns is not a valid regular expression.
     """
     compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
     return any(pattern.search(value) for pattern in compiled_patterns)
@@ -333,15 +292,6 @@ def matches_any_pattern(value: str, patterns: List[str]) -> bool:
 def valid_directory(path: str) -> str:
     """
     Validate directory path.
-
-    Args:
-        path (str): The directory path to validate.
-
-    Returns:
-        str: The valid directory path.
-
-    Raises:
-        argparse.ArgumentTypeError: If the directory path is invalid or doesn't exist.
     """
     if not os.path.exists(path):
         raise argparse.ArgumentTypeError(f"Directory path '{path}' does not exist.")
@@ -355,16 +305,6 @@ def valid_directory(path: str) -> str:
 def filter_files_by_extension(files: List[str], extensions: List[str]) -> List[str]:
     """
     Filter a list of files to return only those that match the provided extensions.
-
-    Args:
-        files (List[str]): The list of file paths to filter.
-        extensions (List[str]): A list of file extensions to filter by.
-
-    Returns:
-        List[str]: A filtered list of file paths with only the specified extensions.
-
-    Raises:
-        TypeError: If the inputs are not lists or if the elements within those lists are not strings.
     """
     if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
         raise TypeError("The 'files' argument must be a list of strings.")
@@ -379,15 +319,6 @@ def filter_files_by_extension(files: List[str], extensions: List[str]) -> List[s
 def get_files(args) -> List[str]:
     """
     Retrieve a list of files based on the provided arguments.
-
-    Args:
-        args: The parsed command-line arguments.
-
-    Returns:
-        List[str]: List of file paths.
-
-    Raises:
-        ValueError: If provided directory path is not an actual directory or no files are found.
     """
     if args.directory:
         try:
@@ -410,18 +341,6 @@ def get_files(args) -> List[str]:
 def get_address_from_coords(lat: str, lon: str) -> str:
     """
     Fetch address from latitude and longitude using the Nominatim API.
-
-    Args:
-        lat (str): Latitude as a string.
-        lon (str): Longitude as a string.
-
-    Returns:
-        str: Address as a string. Returns an empty string if there's an error or nothing found.
-
-    Raises:
-        http.client.HTTPException: If an HTTP error occurs.
-        json.JSONDecodeError: If there's an error decoding the JSON response.
-        Exception: For any other unexpected errors.
     """
     try:
         conn = http.client.HTTPSConnection(NOMINATIM_HOST)
@@ -447,22 +366,7 @@ def get_address_from_coords(lat: str, lon: str) -> str:
 
 def format_gps_data(metadata: Dict[str, str]) -> None:
     """
-    Update the provided metadata dictionary with address and map link
-    derived from the "Formatted GPS Position", if present.
-
-    This function modifies the metadata dictionary in-place to add or update
-    the "Address" and "Map Link" fields.
-
-    Args:
-        metadata (Dict[str, str]): The metadata dictionary containing potential
-                                   GPS data under the key "Formatted GPS Position".
-
-    Returns:
-        None: The function returns nothing but modifies the given dictionary in-place.
-
-    Raises:
-        Exception: If there's an issue fetching the address from the coordinates.
-        ValueError: If the "Formatted GPS Position" data is not in the expected format.
+    Update the provided metadata dictionary with address and map link derived from the "Formatted GPS Position", if present.
     """
     formatted_gps = metadata.get("Formatted GPS Position")
     if not formatted_gps:
@@ -482,22 +386,7 @@ def format_gps_data(metadata: Dict[str, str]) -> None:
 
 def display_all_metadata(all_metadata: List[Dict[str, Any]], ignore_patterns: List[str]) -> None:
     """
-    Display all metadata fields for each metadata entry, excluding fields that match ignore patterns.
-
-    The function will also format GPS data, add address and map link information if available,
-    and print each field-value pair for each metadata entry. If there are no relevant fields for
-    a particular metadata entry, it will indicate so.
-
-    Args:
-        all_metadata (List[Dict[str, Any]]): List of metadata dictionaries to display.
-        ignore_patterns (List[str]): Patterns to use for excluding fields from being displayed.
-
-    Returns:
-        None: The function prints to stdout and does not return a value.
-
-    Raises:
-        ValueError: If the GPS data in any metadata entry is not in the expected format.
-        Exception: If there's an issue fetching the address from the coordinates for any metadata entry.
+    Display all metadata fields for each metadata entry.
     """
     for metadata in all_metadata:
         format_gps_data(metadata)
@@ -518,22 +407,6 @@ def display_singular_metadata(all_metadata: List[Dict[str, Any]],
                               ignore_patterns: List[str]) -> None:
     """
     Display unique metadata fields from a list of metadata entries based on user's display preference.
-
-    The function processes and aggregates unique metadata fields and values from a list of
-    metadata entries. It will format GPS data for each entry, consider fields in the UNIQUE_FIELDS
-    list and display the resulting unique values according to the user's display preference (formatted or not).
-
-    Args:
-        all_metadata (List[Dict[str, Any]]): List of metadata dictionaries to process.
-        args (Namespace): User arguments, including display format preference.
-        ignore_patterns (List[str]): Patterns to use for excluding metadata fields from being displayed.
-
-    Returns:
-        None: The function prints to stdout and does not return a value.
-
-    Raises:
-        ValueError: If the GPS data in any metadata entry is not in the expected format.
-        Exception: If there's an issue fetching the address from the coordinates for any metadata entry.
     """
     unique_values = defaultdict(set)
 
@@ -566,22 +439,6 @@ def display_metadata(args: Namespace,
                      ignore_patterns: List[str]) -> None:
     """
     Display metadata based on user's display preference.
-
-    Depending on the user's preference indicated in the 'args',
-    this function delegates the metadata display to either
-    'display_all_metadata' or 'display_singular_metadata' function.
-
-    Args:
-        args (Namespace): User arguments indicating the display preference ('all' or 'singular').
-        all_metadata (List[Dict[str, Any]]): List of metadata dictionaries to process.
-        ignore_patterns (List[str]): Patterns to use for excluding metadata fields from being displayed.
-
-    Returns:
-        None: The function prints to stdout and does not return a value.
-
-    Raises:
-        ValueError: If an unrecognized display preference is provided in 'args'.
-        Exception: If there's an issue in the subordinate functions it delegates to.
     """
     if args.display == "all":
         display_all_metadata(all_metadata, ignore_patterns)
@@ -593,15 +450,7 @@ def display_metadata(args: Namespace,
 
 def export_metadata_to_html(args: Namespace, all_metadata: List[Dict[str, str]], ignore_patterns: List[str]) -> str:
     """
-    Convert and export metadata to a beautiful HTML page based on the provided arguments.
-
-    Args:
-        args (Namespace): The parsed command-line arguments.
-        all_metadata (List[Dict[str, str]]): List of dictionaries containing metadata.
-        ignore_patterns (List[str]): List of patterns to ignore.
-
-    Returns:
-        str: HTML representation of the metadata.
+    Convert and export metadata to a beautiful HTML page.
     """
     html_parts = [
         '<html>',
@@ -677,13 +526,6 @@ def export_metadata_to_html(args: Namespace, all_metadata: List[Dict[str, str]],
 def generate_all_metadata_txt(all_metadata: List[Dict[str, Any]], ignore_patterns: List[str]) -> List[str]:
     """
     Generate a list of text strings representing the complete metadata for each entry.
-
-    Args:
-        all_metadata (List[Dict[str, Any]]): A list of metadata entries to process.
-        ignore_patterns (List[str]): A list of patterns to ignore during generation.
-
-    Returns:
-        List[str]: A list of text strings, each representing a metadata entry.
     """
     text_parts = []
     for metadata in all_metadata:
@@ -706,15 +548,7 @@ def generate_singular_metadata_txt(all_metadata: List[Dict[str, Any]],
                                    args: Namespace,
                                    ignore_patterns: List[str]) -> List[str]:
     """
-    Generate a list of text strings representing unique metadata values from the provided entries.
-
-    Args:
-        all_metadata (List[Dict[str, Any]]): A list of metadata entries to process.
-        args (Namespace): Arguments specifying the desired format and other options.
-        ignore_patterns (List[str]): A list of patterns to ignore during generation.
-
-    Returns:
-        List[str]: A list of text strings, each representing a unique metadata value.
+    Generate a list of text strings representing unique metadata values.
     """
     text_parts = []
     unique_values = defaultdict(set)
@@ -747,15 +581,7 @@ def generate_singular_metadata_txt(all_metadata: List[Dict[str, Any]],
 
 def export_metadata_to_txt(args: Namespace, all_metadata: List[Dict[str, Any]], ignore_patterns: List[str]) -> str:
     """
-    Export the provided metadata to a text format based on the specified arguments.
-
-    Args:
-        args (Namespace): Arguments specifying the display method and other options.
-        all_metadata (List[Dict[str, Any]]): A list of metadata entries to export.
-        ignore_patterns (List[str]): A list of patterns to ignore during the export.
-
-    Returns:
-        str: Text representation of the metadata, formatted for export.
+    Export the provided metadata to a text format.
     """
     if args.display == "all":
         text_parts = generate_all_metadata_txt(all_metadata, ignore_patterns)
@@ -768,17 +594,7 @@ def export_metadata_to_txt(args: Namespace, all_metadata: List[Dict[str, Any]], 
 def valid_filename(value: str) -> str:
     """
     Check if the filename is alphanumeric, less than 16 characters, and can contain symbols '-' or '_', but not at the end.
-
-    Args:
-        value (str): The filename suffix to validate.
-
-    Returns:
-        str: The valid filename suffix.
-
-    Raises:
-        argparse.ArgumentTypeError: If the filename suffix is invalid.
     """
-
     if not value or len(value) > 16:
         raise argparse.ArgumentTypeError("Filename suffix must be non-empty and less than 16 characters.")
 
@@ -792,26 +608,17 @@ def valid_filename(value: str) -> str:
 
 class LinkParser(HTMLParser):
     """HTML Parser to extract links from a web page."""
-
     def __init__(self) -> None:
-        """Initialize the LinkParser."""
         super().__init__()
         self.links: List[str] = []
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, str]]) -> None:
-        """Handle the start tag of an HTML element.
-
-        Args:
-            tag (str): The tag name of the HTML element.
-            attrs (List[Tuple[str, str]]): List of attribute name and value pairs.
-        """
         tag_to_attr = {
             'a': 'href',
             'img': 'src',
             'script': 'src',
             'link': 'href'
         }
-
         target_attr = tag_to_attr.get(tag)
         if target_attr:
             for name, value in attrs:
@@ -822,28 +629,37 @@ class LinkParser(HTMLParser):
 def fetch_links_from_url(url: str) -> List[str]:
     """
     Fetch all links from a given URL using CloudScraper.
-
-    This function replaces the use of urllib.request.urlopen with CloudScraper
-    to better handle websites that employ anti-bot measures.
-
-    Args:
-        url (str): The URL to fetch links from.
-
-    Returns:
-        List[str]: List of links found on the page.
+    Updated to use a browser-like profile and headers to avoid 403 errors.
     """
     pattern = re.compile(r"\.(css|js)($|\?|#)")
 
     try:
-        # Create a CloudScraper session and perform a GET request
-        scraper = cloudscraper.create_scraper()  # <-- CloudScraper instance
-        response = scraper.get(url)
+        # Create a CloudScraper session with a browser profile
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            }
+        )
+
+        # Use additional headers including a common browser User-Agent
+        headers = {
+            'User-Agent': BROWSER_USER_AGENT,
+            'Accept-Language': 'en-US,en;q=0.9'
+        }
+
+        response = scraper.get(url, headers=headers)
+
+        # Optional: log if status code is not 200
+        if response.status_code != 200:
+            print(f"ERROR: Received status code {response.status_code} for {url}")
+            return []
 
         content_type = response.headers.get('Content-Type', '').split(';')[0]
         if 'text' not in content_type:
             return []
 
-        # Get the response text directly
         data = response.text
         parser = LinkParser()
         parser.feed(data)
@@ -860,12 +676,6 @@ def fetch_links_from_url(url: str) -> List[str]:
 def is_valid_file_link(link: str) -> bool:
     """
     Check if the link is a valid file link based on its extension.
-
-    Args:
-        link (str): The link to check.
-
-    Returns:
-        bool: True if valid, False otherwise.
     """
     path = urllib.parse.urlsplit(link).path
     return any(path.endswith(f".{ext}") for ext in EXTENSIONS)
@@ -877,19 +687,6 @@ def process_url(url: str, depth: int, base_domain: str, q, seen: Set[str],
                 follow_extern: bool = False) -> None:
     """
     Process a URL, fetch its links, and perform download or scanning actions.
-
-    Args:
-        url (str): The URL to process.
-        depth (int): Depth of links to follow.
-        base_domain (str): The base domain to restrict link following.
-        q (Queue): The processing queue.
-        seen (Set[str]): Set of URLs already processed.
-        lock (threading.Lock): Thread lock for shared resources.
-        rate_limiter (RateLimiter): RateLimiter object.
-        file_stats (Dict[str, int]): File statistics dictionary.
-        download_dir (Optional[str], optional): Directory to save downloaded files. Defaults to None.
-        scan (bool, optional): Whether to scan only. Defaults to False.
-        follow_extern (bool): Whether to follow external links.
     """
     if url in seen:
         return
@@ -935,19 +732,12 @@ def process_url(url: str, depth: int, base_domain: str, q, seen: Set[str],
 
 class RateLimiter:
     """Rate limiter class to control the frequency of function calls."""
-
     def __init__(self, rate: float):
-        """
-        Initialize a RateLimiter instance.
-
-        rate (float): Number of allowed function calls per second.
-        """
         self.rate = rate
         self.last_call = 0.0
         self.lock = threading.Lock()
 
     def wait(self) -> None:
-        """Pause the current thread to maintain the desired rate."""
         with self.lock:
             elapsed = time.time() - self.last_call
             left_to_wait = 1.0 / self.rate - elapsed
@@ -959,12 +749,6 @@ class RateLimiter:
 def calculate_hash(data: bytes) -> str:
     """
     Calculate the SHA-256 hash of the given data.
-
-    Args:
-        data (bytes): The binary content of the data to be hashed.
-
-    Returns:
-        str: The hexadecimal digest of the SHA-256 hash.
     """
     sha256_hash = hashlib.sha256()
     sha256_hash.update(data)
@@ -973,15 +757,7 @@ def calculate_hash(data: bytes) -> str:
 
 def find_unique_filename(path: str) -> str:
     """
-    Generate a unique filename in the directory of the provided path by appending
-    a numeric suffix to the base name if the proposed file already exists.
-
-    Args:
-        path (str): The initial file path for which a unique version is sought.
-
-    Returns:
-        str: A unique file path. If the initial path was unique, it is returned unchanged;
-             otherwise, a suffix is added before the file extension.
+    Generate a unique filename in the directory of the provided path.
     """
     counter = 2
     base, ext = os.path.splitext(path)
@@ -994,26 +770,24 @@ def find_unique_filename(path: str) -> str:
 def download_file(url: str, download_dir: str) -> None:
     """
     Download a file from a specified URL using CloudScraper and save it to the given directory.
-    If the file already exists and the content is identical (same hash),
-    the download is skipped. If the file exists but the content is different,
-    a new unique filename is generated.
-
-    Args:
-        url (str): The URL from which the file will be downloaded.
-        download_dir (str): The directory path where the file will be saved.
-
-    Raises:
-        Exception: If the download fails for any reason, the exception is caught and
-                    an error message with the reason for the failure is printed.
+    Updated to pass browser-like headers.
     """
     try:
-        # Encode the URL to ensure it is valid
         encoded_url = quote(url, safe=":/?&=")
         local_filename = os.path.join(download_dir, os.path.basename(urlparse(encoded_url).path))
 
-        # Create a CloudScraper session and perform a GET request for binary data
-        scraper = cloudscraper.create_scraper()  # <-- Using CloudScraper here
-        response = scraper.get(encoded_url)
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            }
+        )
+        headers = {
+            'User-Agent': BROWSER_USER_AGENT,
+            'Accept-Language': 'en-US,en;q=0.9'
+        }
+        response = scraper.get(encoded_url, headers=headers)
         data = response.content
         file_hash = calculate_hash(data)
 
@@ -1045,15 +819,6 @@ def worker_thread(q: queue.Queue[Tuple[str, int, str, bool]],
                   scan: bool = False) -> None:
     """
     Worker thread function to process URLs from the queue.
-
-    Args:
-        q: Queue containing URLs to process.
-        seen: Set of already processed URLs.
-        lock: Lock object to ensure thread-safe access to shared resources.
-        rate_limiter: Instance to control the rate of requests.
-        file_stats: Dictionary tracking statistics about processed files.
-        download_dir: Directory where files should be saved; if None, no download occurs.
-        scan: Indicates whether the tool is in scan mode or not.
     """
     while True:
         task = get_task_from_queue(q)
@@ -1068,12 +833,6 @@ def worker_thread(q: queue.Queue[Tuple[str, int, str, bool]],
 def get_task_from_queue(q: queue.Queue[Tuple[str, int, str, bool]]) -> Tuple[str, int, str, bool]:
     """
     Fetches the next task from the provided queue.
-
-    Args:
-        q (queue.Queue): The queue from which to fetch the next task.
-
-    Returns:
-        Tuple[str, int, str, bool]: The next task in the form of (URL, depth, base_domain, follow_external_links).
     """
     return q.get()
 
@@ -1088,16 +847,6 @@ def process_task(task: Tuple[str, int, str, bool],
                  scan: bool = False) -> None:
     """
     Processes a given task by extracting the relevant information and invoking the appropriate URL processing function.
-
-    Args:
-        task (Tuple[str, int, str, bool]): A tuple containing the URL to process, the depth of crawling, the base domain, and a flag to follow external links.
-        q (queue.Queue): The queue from which tasks are fetched and to which new tasks can be added.
-        seen (Set[str]): A set containing URLs that have already been processed to avoid duplication.
-        lock (threading.Lock): A lock object to ensure thread-safe operations.
-        rate_limiter (RateLimiter): An object to control the rate of URL processing.
-        file_stats (Dict[str, int]): A dictionary to track various statistics related to file processing.
-        download_dir (Optional[str], optional): The directory where the files should be saved. If None, no files are saved.
-        scan (bool, optional): A flag indicating if the tool is in scan mode. If True, URLs are only scanned and not downloaded.
     """
     url, depth, base_domain, follow_extern = task
     process_url(url, depth, base_domain, q, seen, lock, rate_limiter, file_stats, download_dir, scan, follow_extern)
@@ -1106,15 +855,6 @@ def process_task(task: Tuple[str, int, str, bool],
 def valid_url(url: str) -> str:
     """
     Validates if the provided value is a valid URL.
-
-    Args:
-        url (str): The string to validate.
-
-    Returns:
-        str: The validated URL.
-
-    Raises:
-        argparse.ArgumentTypeError: If the provided string is not a valid URL.
     """
     url_pattern = re.compile(
         r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
@@ -1131,22 +871,15 @@ def main():
     parser = argparse.ArgumentParser(description="Retrieve and display metadata from files using exiftool.",
                                      epilog="Example commands:\n\n"
                                             "# Analysis:\n"
-                                            "   # Analyze metadata in a specified directory:\n"
                                             "python3 MetaDetective.py -d path/to/directory\n"
-                                            "   # Analyze specific file types in a directory and ignore certain patterns:\n"
                                             "python3 MetaDetective.py -d directory -i ^admin anonymous -t doc pdf\n"
-                                            "   # Analyze all file types in a directory with formatted display:\n"
                                             "python3 MetaDetective.py -d directory -t all -display singular -format formatted\n"
                                             "\n"
-                                            "   # Export metadata analysis of a directory and exports data (by default in HTML format):\n"
                                             "python3 MetaDetective.py -d directory --export\n"
                                             "\n"
                                             "# Scraping:\n"
-                                            "   # Scan a website without downloading files:\n"
                                             "python3 MetaDetective.py --scraping --scan --url https://example.com/\n"
-                                            "   # Download files from a website to a specified directory:\n"
                                             "python3 MetaDetective.py --scraping --download-dir directory --url https://example.com/\n"
-                                            "   # Download files from a website with specified depth:\n"
                                             "python3 MetaDetective.py --scraping --depth 1 --download-dir directory --url https://example.com/\n",
                                      formatter_class=argparse.RawTextHelpFormatter
                                      )
