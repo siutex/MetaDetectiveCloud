@@ -14,6 +14,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install MetaDetective && \
+    pip install cloudscraper && \
     rm -rf ~/.cache/pip
 
 ENV PATH="/root/.local/bin:${PATH}"
