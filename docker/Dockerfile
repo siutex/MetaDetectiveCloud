@@ -20,6 +20,7 @@ COPY . /app
 
 # Install MetaDetective from local source
 # Also install cloudscraper from PyPI
+RUN ls
 RUN pip3 install --no-cache-dir ../ \
     && pip3 install --no-cache-dir cloudscraper
 
