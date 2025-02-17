@@ -61,6 +61,9 @@ EXTENSIONS = [
 EXIFTOOL_NOT_INSTALLED = "Error: exiftool is not installed. Please install it to continue."
 EXIFTOOL_EXECUTION_ERROR = "Error: exiftool encountered an error."
 
+# Global debug mode flag (set from args.debug in main()):
+DEBUG_MODE = True
+
 NOMINATIM_HOST = "nominatim.openstreetmap.org"
 USER_AGENT = 'MetaDetective/1.0.9'
 NOMINATIM_ENDPOINT = "/reverse?format=jsonv2&lat={lat}&lon={lon}"
@@ -181,7 +184,7 @@ def show_banner() -> None:
 
 
 def check_exiftool_installed() -> None:
-    """Verify exiftool installation and exit the program if absent or on execution error."""
+    """Verify exiftool installation and exit if absent or on execution error."""
     try:
         subprocess.run(["exiftool", "-ver"], capture_output=True, check=True, text=True)
     except FileNotFoundError:
@@ -193,15 +196,6 @@ def check_exiftool_installed() -> None:
 def dms_to_dd(degrees: int, minutes: int, seconds: float, direction: str) -> float:
     """
     Convert coordinates from DMS (Degree-Minute-Second) to DD (Decimal Degrees).
-
-    Args:
-        degrees (int): Degrees component of DMS.
-        minutes (int): Minutes component of DMS.
-        seconds (float): Seconds component of DMS.
-        direction (str): Hemisphere identifier ('N', 'S', 'E', 'W').
-
-    Returns:
-        float: Coordinate in Decimal Degrees format.
     """
     if not (0 <= degrees < 180) or not (0 <= minutes < 60) or not (0 <= seconds < 60):
         raise ValueError("Invalid DMS values provided.")
@@ -219,13 +213,6 @@ def dms_to_dd(degrees: int, minutes: int, seconds: float, direction: str) -> flo
 def parse_dms(dms_str: str) -> Optional[Tuple[int, int, float, str]]:
     """
     Parse a DMS (Degree-Minute-Second) string into its components.
-
-    Args:
-        dms_str (str): String in DMS format, e.g., "50 deg 49' 8.59\" N".
-
-    Returns:
-        Optional[Tuple[int, int, float, str]]:
-        Components (degrees, minutes, seconds, direction) of the DMS if parsed successfully, otherwise None.
     """
     match = re.search(r"(\d+)\s*deg\s*(\d+)'\s*([\d.]+)\"\s*(\w)", dms_str)
     if match:
@@ -238,18 +225,16 @@ def parse_dms(dms_str: str) -> Optional[Tuple[int, int, float, str]]:
 def get_metadata(file_path: str, fields: List[str]) -> dict:
     """
     Retrieve specified metadata fields from a file using exiftool.
-
-    Args:
-        file_path (str): Path of the file to analyze.
-        fields (List[str]): List of metadata fields to extract.
-
-    Returns:
-        dict: Dictionary containing the extracted metadata.
     """
     try:
-        exiftool_output = subprocess.run(["exiftool", file_path], capture_output=True, text=True, check=True)
+        exiftool_output = subprocess.run(
+            ["exiftool", file_path],
+            capture_output=True,
+            text=True,
+            check=True
+        )
     except subprocess.CalledProcessError as e:
-        print(f"Error executing exiftool: {e}")
+        print(f"Error executing exiftool on {file_path}: {e}")
         print()
         return {}
     except UnicodeDecodeError as e:
@@ -265,9 +250,11 @@ def get_metadata(file_path: str, fields: List[str]) -> dict:
             continue
         key, value = line.split(":", 1)
         key = key.strip()
-        if key in field_set and value.strip():
-            metadata[key] = value.strip()
+        value = value.strip()
+        if key in field_set and value:
+            metadata[key] = value
 
+    # Check for GPS data:
     lat_dd, lon_dd = None, None
     gps_position = metadata.get("GPS Position", None)
     if gps_position:
@@ -289,7 +276,7 @@ def get_metadata(file_path: str, fields: List[str]) -> dict:
 
 def matches_any_pattern(value: str, patterns: List[str]) -> bool:
     """
-    Check if a string matches any of the provided patterns.
+    Check if a string matches any of the provided regex patterns.
     """
     compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
     return any(pattern.search(value) for pattern in compiled_patterns)
@@ -297,24 +284,21 @@ def matches_any_pattern(value: str, patterns: List[str]) -> bool:
 
 def valid_directory(path: str) -> str:
     """
-    Validate directory path.
+    Validate directory path for argparse.
     """
     if not os.path.exists(path):
         raise argparse.ArgumentTypeError(f"Directory path '{path}' does not exist.")
-
     if not os.path.isdir(path):
         raise argparse.ArgumentTypeError(f"Path '{path}' is not a directory.")
-
     return path
 
 
 def filter_files_by_extension(files: List[str], extensions: List[str]) -> List[str]:
     """
-    Filter a list of files to return only those that match the provided extensions.
+    Filter a list of files to keep only those matching the given extensions.
     """
     if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
         raise TypeError("The 'files' argument must be a list of strings.")
-
     if not isinstance(extensions, list) or not all(isinstance(ext, str) for ext in extensions):
         raise TypeError("The 'extensions' argument must be a list of strings.")
 
@@ -324,7 +308,7 @@ def filter_files_by_extension(files: List[str], extensions: List[str]) -> List[s
 
 def get_files(args) -> List[str]:
     """
-    Retrieve a list of files based on the provided arguments.
+    Retrieve a list of files from either --directory or --files.
     """
     if args.directory:
         try:
@@ -332,9 +316,11 @@ def get_files(args) -> List[str]:
         except argparse.ArgumentTypeError as e:
             raise ValueError(str(e))
 
-        files = [os.path.join(args.directory, file) for file in os.listdir(args.directory)]
+        all_in_dir = [os.path.join(args.directory, f) for f in os.listdir(args.directory)]
         if args.type != ['all']:
-            files = filter_files_by_extension(files, args.type)
+            files = filter_files_by_extension(all_in_dir, args.type)
+        else:
+            files = all_in_dir
     else:
         files = args.files
 
@@ -372,8 +358,7 @@ def get_address_from_coords(lat: str, lon: str) -> str:
 
 def format_gps_data(metadata: Dict[str, str]) -> None:
     """
-    Update the provided metadata dictionary with address and map link
-    derived from the "Formatted GPS Position", if present.
+    If 'Formatted GPS Position' exists, fetch the address & map link using Nominatim.
     """
     formatted_gps = metadata.get("Formatted GPS Position")
     if not formatted_gps:
@@ -393,7 +378,7 @@ def format_gps_data(metadata: Dict[str, str]) -> None:
 
 def display_all_metadata(all_metadata: List[Dict[str, Any]], ignore_patterns: List[str]) -> None:
     """
-    Display all metadata fields for each metadata entry, excluding fields that match ignore patterns.
+    Print all metadata fields for each file, excluding ignored patterns.
     """
     for metadata in all_metadata:
         format_gps_data(metadata)
@@ -413,26 +398,30 @@ def display_singular_metadata(all_metadata: List[Dict[str, Any]],
                               args: Namespace,
                               ignore_patterns: List[str]) -> None:
     """
-    Display unique metadata fields from a list of metadata entries based on user's display preference.
+    Print unique metadata fields from the entire set of files,
+    either in 'formatted' or 'concise' mode.
     """
     unique_values = defaultdict(set)
 
     for metadata in all_metadata:
         format_gps_data(metadata)
+
         for field in UNIQUE_FIELDS:
             value = metadata.get(field, None)
             if field == "Hyperlinks" and value:
                 links = [link.strip() for link in value.split(',')]
-                valid_links = [link for link in links if not matches_any_pattern(link, ignore_patterns)]
+                valid_links = [l for l in links if not matches_any_pattern(l, ignore_patterns)]
                 if valid_links:
                     unique_values[field].add(', '.join(valid_links))
             elif value and not matches_any_pattern(value, ignore_patterns):
                 unique_values[field].add(value)
 
+    # Now display them:
     for field, values in unique_values.items():
+        # We want to unify them in a case-insensitive manner but preserve the original text
         unique_cased_values = {
-            next(v for v in values if v.lower() == value.lower()): None
-            for value in values
+            next(v for v in values if v.lower() == val.lower()): None
+            for val in values
         }.keys()
         if unique_cased_values:
             if args.format == 'formatted':
@@ -448,33 +437,30 @@ def display_metadata(args: Namespace,
                      all_metadata: List[Dict[str, Any]],
                      ignore_patterns: List[str]) -> None:
     """
-    Display metadata based on user's display preference.
+    Dispatch to correct display function: 'all' or 'singular'.
     """
     if args.display == "all":
         display_all_metadata(all_metadata, ignore_patterns)
     elif args.display == "singular":
         display_singular_metadata(all_metadata, args, ignore_patterns)
     else:
-        raise ValueError(f"Unrecognized display preference: {args.display}")
+        raise ValueError(f"Unrecognized display type: {args.display}")
 
 
 def export_metadata_to_html(args: Namespace, all_metadata: List[Dict[str, str]], ignore_patterns: List[str]) -> str:
     """
-    Convert and export metadata to a beautiful HTML page based on the provided arguments.
+    Convert the metadata to an HTML string (with minimal styling).
     """
     html_parts = [
-        '<html>'
-        '<head>',
-        '<title>MetaDetective Export</title>',
+        "<html><head>",
+        "<title>MetaDetective Export</title>",
         CSS_STYLE,
-        '</head>',
-        '<body>',
-        '<div class="header">',
-        '<h1>MetaDetective Export Report</h1>',
-        '</div>'
+        "</head><body>",
+        '<div class="header"><h1>MetaDetective Export Report</h1></div>'
     ]
 
     if args.display == "all":
+        # For each file's metadata, display everything
         for metadata in all_metadata:
             html_parts.append('<div class="metadata-entry">')
 
@@ -491,14 +477,16 @@ def export_metadata_to_html(args: Namespace, all_metadata: List[Dict[str, str]],
             displayed_fields = 0
             for field, value in metadata.items():
                 if field in FIELDS and value and not matches_any_pattern(value, ignore_patterns):
-                    html_parts.append(f'<p><strong>{field}:</strong> {value}</p>')
+                    html_parts.append(f"<p><strong>{field}:</strong> {value}</p>")
                     displayed_fields += 1
 
             if displayed_fields == 1:
-                html_parts.append('<p>No relevant metadata found.</p>')
+                html_parts.append("<p>No relevant metadata found.</p>")
 
-            html_parts.append('<hr></div>')
+            html_parts.append("<hr></div>")
+
     elif args.display == "singular":
+        # We gather unique values
         unique_values = defaultdict(set)
 
         for metadata in all_metadata:
@@ -512,134 +500,135 @@ def export_metadata_to_html(args: Namespace, all_metadata: List[Dict[str, str]],
                 value = metadata.get(field, None)
                 if field == "Hyperlinks" and value:
                     links = [link.strip() for link in value.split(',')]
-                    valid_links = [link for link in links if not matches_any_pattern(link, ignore_patterns)]
+                    valid_links = [l for l in links if not matches_any_pattern(l, ignore_patterns)]
                     if valid_links:
                         unique_values[field].add(', '.join(valid_links))
                 elif value and not matches_any_pattern(value, ignore_patterns):
                     unique_values[field].add(value)
 
+        # Now output the unique sets
         for field, values in unique_values.items():
             unique_cased_values = {
-                next(v for v in values if v.lower() == value.lower()): None
-                for value in values
+                next(v for v in values if v.lower() == val.lower()): None
+                for val in values
             }.keys()
             if unique_cased_values:
-                html_parts.append(f'<h3>{field}:</h3>')
+                html_parts.append(f"<h3>{field}:</h3>")
                 if args.format == 'formatted':
                     for unique_value in unique_cased_values:
-                        html_parts.append(f'<p>    - {unique_value}</p>')
+                        html_parts.append(f"<p>    - {unique_value}</p>")
                 else:
                     html_parts.append(f"<p>{', '.join(unique_cased_values)}</p>")
-                html_parts.append('<hr>')
+                html_parts.append("<hr>")
 
-    html_parts.append('</body></html>')
+    html_parts.append("</body></html>")
     return ''.join(html_parts)
 
 
 def generate_all_metadata_txt(all_metadata: List[Dict[str, Any]], ignore_patterns: List[str]) -> List[str]:
     """
-    Generate a list of text strings representing the complete metadata for each entry.
+    Generate text lines representing full metadata for each file.
     """
-    text_parts = []
+    text_lines = []
+
     for metadata in all_metadata:
         format_gps_data(metadata)
 
         displayed_fields = 0
         for field, value in metadata.items():
             if field in FIELDS and value and not matches_any_pattern(value, ignore_patterns):
-                text_parts.append(f"{field}: {value}")
+                text_lines.append(f"{field}: {value}")
                 displayed_fields += 1
 
         if displayed_fields == 1:
-            text_parts.append("No relevant metadata found.")
-        text_parts.append("-" * 40)
+            text_lines.append("No relevant metadata found.")
+        text_lines.append("-" * 40)
 
-    return text_parts
+    return text_lines
 
 
 def generate_singular_metadata_txt(all_metadata: List[Dict[str, Any]],
                                    args: Namespace,
                                    ignore_patterns: List[str]) -> List[str]:
     """
-    Generate a list of text strings representing unique metadata values from the provided entries.
+    Generate text lines for unique metadata fields across all files.
     """
-    text_parts = []
+    text_lines = []
     unique_values = defaultdict(set)
 
     for metadata in all_metadata:
         format_gps_data(metadata)
+
         for field in UNIQUE_FIELDS:
             value = metadata.get(field, None)
             if field == "Hyperlinks" and value:
                 links = [link.strip() for link in value.split(',')]
-                valid_links = [link for link in links if not matches_any_pattern(link, ignore_patterns)]
+                valid_links = [l for l in links if not matches_any_pattern(l, ignore_patterns)]
                 if valid_links:
                     unique_values[field].add(', '.join(valid_links))
             elif value and not matches_any_pattern(value, ignore_patterns):
                 unique_values[field].add(value)
 
+    # Output the aggregated unique values
     for field, values in unique_values.items():
         unique_cased_values = {
-            next(v for v in values if v.lower() == value.lower()): None
-            for value in values
+            next(v for v in values if v.lower() == val.lower()): None
+            for val in values
         }.keys()
         if unique_cased_values:
             if args.format == 'formatted':
-                text_parts.append(f"{field}:")
+                text_lines.append(f"{field}:")
                 for unique_value in unique_cased_values:
-                    text_parts.append(f"    - {unique_value}")
+                    text_lines.append(f"    - {unique_value}")
             else:
-                text_parts.append(f"{field}: {', '.join(unique_cased_values)}")
-            text_parts.append("")
+                text_lines.append(f"{field}: {', '.join(unique_cased_values)}")
+            text_lines.append("")
 
-    return text_parts
+    return text_lines
 
 
 def export_metadata_to_txt(args: Namespace, all_metadata: List[Dict[str, Any]], ignore_patterns: List[str]) -> str:
     """
-    Export the provided metadata to a text format based on the specified arguments.
+    Convert metadata to text output (either 'all' or 'singular' display).
     """
     if args.display == "all":
-        text_parts = generate_all_metadata_txt(all_metadata, ignore_patterns)
-    elif args.display == "singular":
-        text_parts = generate_singular_metadata_txt(all_metadata, args, ignore_patterns)
-
-    return '\n'.join(text_parts)
+        lines = generate_all_metadata_txt(all_metadata, ignore_patterns)
+    else:
+        lines = generate_singular_metadata_txt(all_metadata, args, ignore_patterns)
+    return "\n".join(lines)
 
 
 def valid_filename(value: str) -> str:
     """
-    Check if the filename is alphanumeric, less than 16 characters, and can contain
-    symbols '-' or '_', but not at the end.
+    Validate custom filename suffix (alphanumeric, up to 16 chars, optional '-' or '_').
     """
     if not value or len(value) > 16:
         raise argparse.ArgumentTypeError("Filename suffix must be non-empty and less than 16 characters.")
 
     pattern = r'^[a-zA-Z0-9_-]*[a-zA-Z0-9]$'
     if not re.match(pattern, value):
-        raise argparse.ArgumentTypeError("Invalid filename suffix. It should be alphanumeric, "
-                                         "can contain '-' or '_', but not end with them.")
+        raise argparse.ArgumentTypeError(
+            "Invalid filename suffix. It must be alphanumeric, can contain '-' or '_', but not end with them."
+        )
     return value
 
 
 class LinkParser(HTMLParser):
-    """HTML Parser to extract links from a web page."""
+    """
+    HTML Parser to extract <a href>, <img src>, <script src>, <link href> from a page.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.links: List[str] = []
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, str]]) -> None:
-        """
-        Handle the start tag of an HTML element.
-        """
         tag_to_attr = {
             'a': 'href',
             'img': 'src',
             'script': 'src',
             'link': 'href'
         }
-
         target_attr = tag_to_attr.get(tag)
         if target_attr:
             for name, value in attrs:
@@ -649,12 +638,13 @@ class LinkParser(HTMLParser):
 
 def fetch_links_from_url(url: str) -> List[str]:
     """
-    Fetch all links from a given URL, bypassing some Cloudflare 403 blocks by using
-    a more "real" browser User-Agent. 
+    Fetch all links from a URL using a browser-like User-Agent to reduce 403 rejections.
+
+    If a 403 error occurs and DEBUG_MODE is enabled, print debug info.
     """
     pattern = re.compile(r"\.(css|js)($|\?|#)")
-    
-    # A more standard browser-like User-Agent to help pass Cloudflare checks.
+
+    # Custom "browser-like" User-Agent:
     headers = {
         'User-Agent': (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -664,7 +654,6 @@ def fetch_links_from_url(url: str) -> List[str]:
     }
 
     req = urllib.request.Request(url, headers=headers)
-
     try:
         response = urllib.request.urlopen(req)
 
@@ -679,15 +668,19 @@ def fetch_links_from_url(url: str) -> List[str]:
             link for link in parser.links
             if not link.startswith("javascript:") and not pattern.search(link)
         ]
-
+    except urllib.error.HTTPError as e:
+        # If we get 403 or other code, show debug if needed:
+        if DEBUG_MODE:
+            print(f"[DEBUG] HTTPError in fetch_links_from_url('{url}') => {e.code} {e.reason}")
+            if e.code == 403:
+                print("[DEBUG] This typically means the server blocked our request (Cloudflare or similar).")
+        return []
     except urllib.error.URLError as e:
         if url.startswith("mailto:"):
+            # Not a real URL to open, but let's mention it
             print(f"INFO: Found mailto link {url}")
         else:
             print(f"ERROR: Unable to open {url} Reason: {e}")
-        return []
-    except urllib.error.HTTPError as e:
-        print(f"HTTP Error for URL {url} Reason: {e.code} - {e.reason}")
         return []
     except ValueError as e:
         print(f"ERROR: Unable to decode data from {url} Reason: {e}")
@@ -696,18 +689,19 @@ def fetch_links_from_url(url: str) -> List[str]:
 
 def is_valid_file_link(link: str) -> bool:
     """
-    Check if the link is a valid file link based on its extension.
+    Check if 'link' ends with a valid extension from EXTENSIONS.
     """
     path = urlsplit(link).path
     return any(path.endswith(f".{ext}") for ext in EXTENSIONS)
 
 
 def process_url(url: str, depth: int, base_domain: str, q, seen: Set[str],
-                lock: threading.Lock, rate_limiter, file_stats: Dict[str, int],
+                lock: threading.Lock, rate_limiter,
+                file_stats: Dict[str, int],
                 download_dir: Optional[str] = None, scan: bool = False,
                 follow_extern: bool = False) -> None:
     """
-    Process a URL, fetch its links, and perform download or scanning actions.
+    Crawl/scrape a single URL: fetch links, optionally download or collect stats.
     """
     if url in seen:
         return
@@ -716,21 +710,21 @@ def process_url(url: str, depth: int, base_domain: str, q, seen: Set[str],
         seen.add(url)
 
     print(f"INFO: Accessing {url}")
-
     rate_limiter.wait()
 
     links = fetch_links_from_url(url)
-
-    file_links = [urljoin(url, link) for link in links if is_valid_file_link(link)]
+    file_links = [urljoin(url, l) for l in links if is_valid_file_link(l)]
 
     if download_dir and not scan:
+        # Download mode
         if not file_links:
             print("\nNo files found or no files with specified extensions.")
             return
-
         for file_link in file_links:
             download_file(file_link, download_dir)
+
     elif scan:
+        # Just gather stats, no download
         for file_link in file_links:
             file_url = urljoin(url, file_link)
             file_name = os.path.basename(urlparse(file_url).path)
@@ -740,20 +734,21 @@ def process_url(url: str, depth: int, base_domain: str, q, seen: Set[str],
                     file_stats[extension] = set()
                 file_stats[extension].add((file_url, file_name))
 
+    # If we still have depth, keep scraping deeper links
     if depth > 0:
-        for link in links:
-            parsed_link = urlparse(link)
-            joined_link = urljoin(url, link)
-
+        for l in links:
+            parsed_link = urlparse(l)
+            joined_link = urljoin(url, l)
+            # If follow_extern is False, skip external domains
             if not follow_extern and parsed_link.netloc and parsed_link.netloc != base_domain:
                 continue
-
             q.put((joined_link, depth - 1, base_domain, follow_extern))
 
 
 class RateLimiter:
-    """Rate limiter class to control the frequency of function calls."""
-
+    """
+    Simple rate limiter to limit requests to 'rate' per second.
+    """
     def __init__(self, rate: float):
         self.rate = rate
         self.last_call = 0.0
@@ -770,7 +765,7 @@ class RateLimiter:
 
 def calculate_hash(data: bytes) -> str:
     """
-    Calculate the SHA-256 hash of the given data.
+    Return SHA-256 of the given bytes.
     """
     sha256_hash = hashlib.sha256()
     sha256_hash.update(data)
@@ -779,7 +774,7 @@ def calculate_hash(data: bytes) -> str:
 
 def find_unique_filename(path: str) -> str:
     """
-    Generate a unique filename by appending a numeric suffix if the file already exists.
+    If 'path' exists, keep appending '-2', '-3', etc. until we find a free name.
     """
     counter = 2
     base, ext = os.path.splitext(path)
@@ -791,16 +786,28 @@ def find_unique_filename(path: str) -> str:
 
 def download_file(url: str, download_dir: str) -> None:
     """
-    Download a file from a specified URL and save it to the given directory.
+    Download a file from 'url' to 'download_dir' with a custom User-Agent.
+
+    If 403 occurs and debug is on, we print more info.
     """
     try:
+        # "Browser-like" header:
+        headers = {
+            'User-Agent': (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/114.0.0.0 Safari/537.36"
+            )
+        }
         encoded_url = quote(url, safe=":/?&=")
         local_filename = os.path.join(download_dir, os.path.basename(urlparse(encoded_url).path))
 
-        with urllib.request.urlopen(encoded_url) as response:
+        req = urllib.request.Request(encoded_url, headers=headers)
+        with urllib.request.urlopen(req) as response:
             data = response.read()
             file_hash = calculate_hash(data)
 
+            # If there's already a file with that name, compare hashes
             if os.path.exists(local_filename):
                 with open(local_filename, 'rb') as existing_file:
                     existing_file_hash = calculate_hash(existing_file.read())
@@ -815,9 +822,19 @@ def download_file(url: str, download_dir: str) -> None:
                           f"Saving the new file as '{new_local_filename}'.")
                     local_filename = new_local_filename
 
+            # Write the new file
             with open(local_filename, 'wb') as out_file:
                 out_file.write(data)
             print(f"INFO: Downloaded {url} to {local_filename}. SHA-256: {file_hash}.")
+
+    except urllib.error.HTTPError as e:
+        if DEBUG_MODE:
+            print(f"[DEBUG] HTTPError in download_file('{url}') => {e.code} {e.reason}")
+            if e.code == 403:
+                print("[DEBUG] The server returned 403 Forbidden. Possibly blocked by Cloudflare or the site.")
+        else:
+            print(f"ERROR: Failed to download {url}. HTTPError: {e.code} {e.reason}")
+
     except Exception as e:
         print(f"ERROR: Failed to download {url}. Reason: {e}")
 
@@ -830,20 +847,19 @@ def worker_thread(q: queue.Queue[Tuple[str, int, str, bool]],
                   download_dir: Optional[str] = None,
                   scan: bool = False) -> None:
     """
-    Worker thread function to process URLs from the queue.
+    Thread entry point. Pull tasks from queue and process them until we see SENTINEL.
     """
     while True:
         task = get_task_from_queue(q)
         if task is SENTINEL:
             break
-
         process_task(task, q, seen, lock, rate_limiter, file_stats, download_dir, scan)
         q.task_done()
 
 
 def get_task_from_queue(q: queue.Queue[Tuple[str, int, str, bool]]) -> Tuple[str, int, str, bool]:
     """
-    Fetches the next task from the provided queue.
+    A small helper to fetch from the queue. 
     """
     return q.get()
 
@@ -857,18 +873,20 @@ def process_task(task: Tuple[str, int, str, bool],
                  download_dir: Optional[str] = None,
                  scan: bool = False) -> None:
     """
-    Processes a given task by extracting the relevant info and invoking process_url.
+    Execute a scraping task (process_url).
     """
     url, depth, base_domain, follow_extern = task
-    process_url(url, depth, base_domain, q, seen, lock, rate_limiter, file_stats, download_dir, scan, follow_extern)
+    process_url(url, depth, base_domain, q, seen, lock, rate_limiter, file_stats,
+                download_dir, scan, follow_extern)
 
 
 def valid_url(url: str) -> str:
     """
-    Validates if the provided value is a valid URL.
+    Validate user-provided URL for argparse.
     """
     url_pattern = re.compile(
-        r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+        r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|'
+        r'(?:%[0-9a-fA-F][0-9a-fA-F]))+'
     )
     if not url_pattern.match(url):
         raise argparse.ArgumentTypeError(f"'{url}' is not a valid URL.")
@@ -876,6 +894,8 @@ def valid_url(url: str) -> str:
 
 
 def main():
+    global DEBUG_MODE  # So we can set the global debug flag if needed
+
     show_banner()
     check_exiftool_installed()
 
@@ -903,75 +923,93 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter
     )
 
-    scraping_group = parser.add_argument_group('scraping options', 'Options for scraping files containing potential metadata from a website.')
+    # Debug mode argument:
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable debug mode to display detailed information on 403/HTTP errors.")
+
+    # Scraping group:
+    scraping_group = parser.add_argument_group('scraping options')
     scraping_group.add_argument('-s', '--scraping', action='store_true', help="Activate scraping mode.")
     scraping_group.add_argument('-u', "--url", type=valid_url, help="Site URL for scraping.")
     scraping_group.add_argument("--scan", action="store_true", help="Scan the website without downloading files (just gather stats).")
-    scraping_group.add_argument('--extensions', nargs='+', type=str.lower, help='File extensions to filter by, e.g., --extensions pdf jpg png')
+    scraping_group.add_argument('--extensions', nargs='+', type=str.lower,
+                                help='File extensions to filter by, e.g., --extensions pdf jpg png')
     scraping_group.add_argument("--depth", type=int, default=0, help="Depth of links to follow on the site.")
-    scraping_group.add_argument("--download-dir", type=valid_directory, help="Directory to store files that have been scraped.")
+    scraping_group.add_argument("--download-dir", type=valid_directory,
+                                help="Directory to store files that have been scraped.")
     scraping_group.add_argument("--follow-extern", action="store_true", help="Follow external links.")
     scraping_group.add_argument("--threads", type=int, default=4, help="Number of threads to use.")
-    scraping_group.add_argument("--rate", type=int, default=5, help="Maximum number of requests per second.")
+    scraping_group.add_argument("--rate", type=int, default=5, help="Max requests per second.")
 
-    analysis_group = parser.add_argument_group('analysis options', 'Main analysis options.')
-    analysis_group.add_argument('-d', '--directory', type=valid_directory, help="Directory containing the files to be analyzed.")
-    analysis_group.add_argument('-f', '--files', nargs='+', help="File(s) to be analyzed (space-separated).")
+    # Analysis group:
+    analysis_group = parser.add_argument_group('analysis options')
+    analysis_group.add_argument('-d', '--directory', type=valid_directory,
+                                help="Directory containing the files to be analyzed.")
+    analysis_group.add_argument('-f', '--files', nargs='+',
+                                help="File(s) to be analyzed (space-separated).")
+    analysis_group.add_argument('-t', '--type', nargs='+', default=['all'],
+                                help="File types (extensions) to be analyzed (all by default).")
 
-    analysis_group.add_argument('-t', '--type', nargs='+', default=['all'], help="File types (extensions) to be analyzed (all by default).")
-
-    display_group = parser.add_argument_group('display options', 'Options for displaying results.')
-    display_group.add_argument('-i', '--ignore', nargs='+', help="Ignore one or more keyword/regex patterns in the results.")
+    # Display group:
+    display_group = parser.add_argument_group('display options')
+    display_group.add_argument('-i', '--ignore', nargs='+',
+                               help="Ignore one or more keyword/regex patterns in the results.")
     display_group.add_argument('--display', choices=['all', 'singular'], default='singular',
                                help="'all' = show all results per file; 'singular' = condensed/unique results.")
     display_group.add_argument('--format', choices=['formatted', 'concise'],
-                               help="Valid only with '--display singular': "
-                                    "'formatted' = stylized display, 'concise' = simple/compact.")
+                               help="Valid only with '--display singular': 'formatted' or 'concise'.")
 
-    export_group = parser.add_argument_group('export options', 'Options for exporting results.')
+    # Export group:
+    export_group = parser.add_argument_group('export options')
     export_group.add_argument('-e', '--export', nargs='?', const='html', choices=['html', 'txt'], default=None,
-                              help="Export results. Default format is HTML. Text export (txt) also possible.")
+                              help="Export results. Default is HTML; can also do --export txt.")
     export_group.add_argument('-c', '--custom', type=valid_filename,
                               help="Add a custom suffix to the exported filename.")
     export_group.add_argument('-o', '--out', type=valid_directory, default=os.getcwd(),
-                              help="Specify export directory (default is current working directory).")
+                              help="Specify export directory (default current directory).")
 
     args = parser.parse_args()
 
-    # If no arguments provided, display help and exit.
+    # If no args, show help and exit
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(0)
+
+    # Set global DEBUG_MODE:
+    if args.debug:
+        DEBUG_MODE = True
+        print("[DEBUG] Debug mode enabled.")
 
     # Scraping mode
     if args.scraping:
         if args.directory or args.files or args.ignore:
             parser.error("Analysis arguments (--directory/-d, --files/-f, or --ignore/-i) "
-                         "cannot be used with scraping options (--scraping/-s).")
+                         "cannot be used with scraping mode (--scraping).")
 
         if args.scan and args.download_dir:
-            parser.error("The scan (--scan) and download (--download-dir) arguments cannot "
-                         "be specified together. Choose only one in scraping mode.")
+            parser.error("Cannot use both --scan and --download-dir together in scraping mode.")
         elif not args.scan and not args.download_dir:
-            parser.error("You must use either --scan or --download-dir in scraping mode.")
+            parser.error("Must specify either --scan or --download-dir in scraping mode.")
 
         if not args.url:
-            parser.error("The URL argument (-u or --url) is required for scraping mode.")
+            parser.error("Scraping mode requires --url.")
 
+        # Set any custom extension filters
         if args.extensions:
             global EXTENSIONS
             EXTENSIONS = args.extensions
 
         base_domain = urlparse(args.url).netloc
-
         seen = set()
         lock = threading.Lock()
         q = queue.Queue()
         rate_limiter = RateLimiter(args.rate)
         file_stats = {}
 
+        # Put initial task in the queue
         q.put((args.url, args.depth, base_domain, args.follow_extern))
 
+        # Start the threads
         threads = []
         for _ in range(args.threads):
             t = threading.Thread(
@@ -983,12 +1021,14 @@ def main():
 
         q.join()
 
+        # Stop threads
         for _ in range(args.threads):
-            q.put(None)
+            q.put(SENTINEL)
         for t in threads:
             t.join()
 
         if args.scan:
+            # Summarize
             if not any(file_stats.values()):
                 print("\nNo files found or no files with specified extensions.")
                 sys.exit(0)
@@ -1002,29 +1042,34 @@ def main():
             print("+---------------+-----------------------------------+")
             print(f"\nINFO: Total URLs processed (followed): {len(seen)}")
             print("NOTE: These results are an estimate and do not guarantee uniqueness.")
+
         sys.exit(0)
 
     # Analysis mode
     elif args.directory or args.files:
         if args.directory and args.files:
-            parser.error("Cannot specify both --directory/-d and --files/-f simultaneously in analysis mode.")
+            parser.error("Cannot specify both --directory and --files in analysis mode.")
 
         ignore_patterns = args.ignore if args.ignore else []
 
         if args.display == 'all' and args.format:
             parser.error("The '--format' argument is not compatible with '--display all'.")
 
+        # If user chooses 'singular' but no --format, default to 'concise'
         if args.display == 'singular' and args.format is None:
             args.format = 'concise'
 
+        # Gather files
         files = get_files(args)
-        all_metadata = [get_metadata(file, FIELDS) for file in files]
+        # Extract metadata
+        all_metadata = [get_metadata(f, FIELDS) for f in files]
 
+        # Export or just display
         if args.export:
             if args.export == 'html':
                 content = export_metadata_to_html(args, all_metadata, ignore_patterns)
                 file_extension = '.html'
-            else:
+            else:  # txt
                 content = export_metadata_to_txt(args, all_metadata, ignore_patterns)
                 file_extension = '.txt'
 
@@ -1033,12 +1078,14 @@ def main():
             filename = f"MetaDetective_Export-{custom_suffix}{timestamp}{file_extension}"
 
             full_path = os.path.join(args.out, filename)
-
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content)
             print(f"Results file exported to {full_path}")
+
         else:
+            # Print to stdout
             display_metadata(args, all_metadata, ignore_patterns)
+
     else:
         parser.error("You must specify either --scraping or --directory or --files.")
 
